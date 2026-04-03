@@ -124,6 +124,16 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 	})
 
 	request := providersRequestFromState(state, s.registry.Descriptors())
+	request.OnAssistantDelta = func(delta string) {
+		if strings.TrimSpace(delta) == "" && delta != "\n" {
+			return
+		}
+		runtime.Emit(ctx, runtime.Event{
+			Type:      runtime.EventAssistantDelta,
+			SessionID: state.SessionID,
+			Delta:     delta,
+		})
+	}
 	response, err := s.provider.Generate(ctx, request)
 	if err != nil && state.FallbackModel != "" && state.FallbackModel != state.Model {
 		runtime.Emit(ctx, runtime.Event{
@@ -147,12 +157,14 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 
 	if strings.TrimSpace(response.AssistantText) != "" {
 		text := strings.TrimSpace(response.AssistantText)
-		for _, chunk := range chunkText(text, 80) {
-			runtime.Emit(ctx, runtime.Event{
-				Type:      runtime.EventAssistantDelta,
-				SessionID: state.SessionID,
-				Delta:     chunk,
-			})
+		if !response.StreamedText {
+			for _, chunk := range chunkText(text, 80) {
+				runtime.Emit(ctx, runtime.Event{
+					Type:      runtime.EventAssistantDelta,
+					SessionID: state.SessionID,
+					Delta:     chunk,
+				})
+			}
 		}
 		message := runtime.Message{
 			ID:        generateMessageID("assistant"),

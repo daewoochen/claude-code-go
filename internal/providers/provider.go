@@ -7,11 +7,12 @@ import (
 )
 
 type GenerateRequest struct {
-	Model           string
-	SystemPrompt    string
-	Messages        []runtime.Message
-	Tools           []runtime.ToolDescriptor
-	MaxOutputTokens int
+	Model            string
+	SystemPrompt     string
+	Messages         []runtime.Message
+	Tools            []runtime.ToolDescriptor
+	MaxOutputTokens  int
+	OnAssistantDelta func(string)
 }
 
 type GenerateResponse struct {
@@ -20,6 +21,7 @@ type GenerateResponse struct {
 	StopReason    string
 	Usage         runtime.Usage
 	ProviderName  string
+	StreamedText  bool
 }
 
 type ChatModelProvider interface {

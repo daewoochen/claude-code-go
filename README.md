@@ -2,7 +2,6 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-black?style=flat-square)](./LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/daewoochen/claude-code-go/ci.yml?branch=main&style=flat-square)](https://github.com/daewoochen/claude-code-go/actions)
 [![GitHub stars](https://img.shields.io/github/stars/daewoochen/claude-code-go?style=flat-square)](https://github.com/daewoochen/claude-code-go/stargazers)
 
 **A terminal-native coding agent runtime in Go, powered by Eino.**
@@ -17,6 +16,50 @@
 - MCP-friendly tool registration
 
 It is designed for people who want the **Claude Code style architecture** in a **Go-first, hackable, open-source codebase**.
+
+## Why This Repo Is Worth Starring
+
+- **One of the clearest Go codebases for building a real coding agent**
+- **Graph-based runtime, not a toy wrapper around an API call**
+- **Session persistence, tool loops, permission policy, and MCP hooks included**
+- **Small enough to understand, serious enough to extend**
+
+If you want to build your own terminal agent, internal engineering copilot, or remote coding worker in Go, this repo is meant to save you weeks.
+
+## Demo
+
+### Plain CLI mode
+
+```bash
+$ go run ./cmd/ccgo run --provider mock "hello from ccgo"
+[system] calling model
+mock: hello from ccgo
+```
+
+### Stream JSON mode
+
+```bash
+$ go run ./cmd/ccgo print --provider mock "use echo from stream mode"
+{"type":"system","message":"calling model", ...}
+{"type":"tool_result","tool_name":"echo", ...}
+{"type":"assistant_delta","delta":"Tool echo returned: ...", ...}
+{"type":"result","reason":"completed", ...}
+```
+
+## Feature Snapshot
+
+| Capability | Status |
+| --- | --- |
+| Go-native CLI runtime | Yes |
+| Eino graph orchestration | Yes |
+| Multi-turn agent loop | Yes |
+| Tool registry + permission policy | Yes |
+| Session transcript + snapshot resume | Yes |
+| Anthropic-compatible provider | Yes |
+| Real Anthropic SSE text streaming | Yes |
+| MCP config + static tool bridge | Yes |
+| Full stdio MCP protocol client | Not yet |
+| TUI shell | Not yet |
 
 ## Why This Exists
 
@@ -57,7 +100,7 @@ InputNormalize
   - `echo`
   - `read_file`
   - `bash`
-- Anthropic-compatible messages API provider
+- Anthropic-compatible messages API provider with SSE text streaming
 - append-only transcript + snapshot persistence
 - permission policy layer with `allow_all`, `deny_all`, `ask_as_error`
 
@@ -132,7 +175,6 @@ A sample config is available at [examples/mcp.example.json](./examples/mcp.examp
 
 ## Roadmap
 
-- real Anthropic SSE streaming instead of response chunk replay
 - full stdio MCP protocol support
 - richer context compression and token-budget recovery
 - tool interrupt / resume semantics mapped to Eino checkpoints
