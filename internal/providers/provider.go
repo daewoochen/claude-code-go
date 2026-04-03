@@ -13,6 +13,7 @@ type GenerateRequest struct {
 	Tools            []runtime.ToolDescriptor
 	MaxOutputTokens  int
 	OnAssistantDelta func(string)
+	OnToolCall       func(runtime.ToolCall) error
 }
 
 type GenerateResponse struct {

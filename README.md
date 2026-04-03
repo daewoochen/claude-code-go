@@ -11,6 +11,7 @@
 - multi-turn agent loops
 - structured tool calling
 - streaming events
+- early tool dispatch during streaming model responses
 - local input preprocessing and slash commands
 - resumable sessions
 - prompt-too-long and max-output recovery
@@ -55,6 +56,7 @@ $ go run ./cmd/ccgo print --provider mock "use echo from stream mode"
 | Go-native CLI runtime | Yes |
 | Eino graph orchestration | Yes |
 | Multi-turn agent loop | Yes |
+| Early tool dispatch while model is still streaming | Yes |
 | Local input preprocessing (`/tools`, `/session`, `!cmd`) | Yes |
 | Tool registry + permission policy | Yes |
 | Session transcript + snapshot resume | Yes |
@@ -113,6 +115,7 @@ InputNormalize
   - `read_file`
   - `bash`
 - Anthropic-compatible messages API provider with SSE text streaming
+- streamed tool calls can start executing before the model turn fully closes
 - append-only transcript + snapshot persistence
 - permission policy layer with `allow_all`, `deny_all`, `ask_as_error`
 - reactive prompt-too-long compaction
@@ -197,7 +200,6 @@ Sample configs are available at [examples/mcp.example.json](./examples/mcp.examp
 
 ## Roadmap
 
-- SSE tool-use streaming and earlier tool dispatch
 - richer context compression and token-budget recovery
 - tool interrupt / resume semantics mapped to Eino checkpoints
 - richer MCP transports beyond stdio

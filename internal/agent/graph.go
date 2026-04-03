@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/compose"
@@ -123,6 +124,27 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 		Message:   "calling model",
 	})
 
+	executor := tools.Executor{
+		Registry: s.registry,
+		Policy: tools.Policy{
+			Mode: state.PermissionMode,
+		},
+	}
+	execCtx := tools.ExecutionContext{
+		SessionID: state.SessionID,
+		CWD:       state.Metadata["cwd"],
+	}
+	type streamedExecution struct {
+		call    runtime.ToolCall
+		updates []tools.Update
+	}
+	var (
+		streamMu        sync.Mutex
+		streamWait      sync.WaitGroup
+		streamed        []streamedExecution
+		streamedExecErr error
+	)
+
 	request := providersRequestFromState(state, s.registry.Descriptors())
 	request.OnAssistantDelta = func(delta string) {
 		if strings.TrimSpace(delta) == "" && delta != "\n" {
@@ -134,7 +156,41 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 			Delta:     delta,
 		})
 	}
+	request.OnToolCall = func(call runtime.ToolCall) error {
+		call = s.normalizeToolCall(call)
+		if call.Metadata == nil {
+			call.Metadata = map[string]string{}
+		}
+		call.Metadata["dispatch"] = "streaming"
+
+		streamMu.Lock()
+		index := len(streamed)
+		streamed = append(streamed, streamedExecution{call: call})
+		streamMu.Unlock()
+
+		run := func() {
+			updates, err := executor.ExecuteBatch(ctx, execCtx, []runtime.ToolCall{call})
+			streamMu.Lock()
+			defer streamMu.Unlock()
+			streamed[index].updates = updates
+			if err != nil && streamedExecErr == nil {
+				streamedExecErr = err
+			}
+		}
+		if call.ConcurrencySafe {
+			streamWait.Add(1)
+			go func() {
+				defer streamWait.Done()
+				run()
+			}()
+			return nil
+		}
+		streamWait.Wait()
+		run()
+		return streamedExecErr
+	}
 	response, err := s.provider.Generate(ctx, request)
+	streamWait.Wait()
 	if err != nil && state.FallbackModel != "" && state.FallbackModel != state.Model {
 		runtime.Emit(ctx, runtime.Event{
 			Type:      runtime.EventSystem,
@@ -143,6 +199,7 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 		})
 		request.Model = state.FallbackModel
 		response, err = s.provider.Generate(ctx, request)
+		streamWait.Wait()
 	}
 	if err != nil {
 		if isPromptTooLongError(err) && state.ReactiveCompactCount < maxReactiveCompactAttempts {
@@ -160,6 +217,10 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 			}
 		}
 		state.Error = err.Error()
+		return state, nil
+	}
+	if streamedExecErr != nil {
+		state.Error = streamedExecErr.Error()
 		return state, nil
 	}
 	state.TurnsUsed++
@@ -212,19 +273,42 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 	state.MaxOutputRecoveryCount = 0
 
 	if len(response.ToolCalls) > 0 {
-		state.PendingToolCalls = response.ToolCalls
 		state.LastResult = ""
-		for _, call := range response.ToolCalls {
-			message := runtime.Message{
-				ID:        generateMessageID("assistant_tool"),
-				Role:      runtime.RoleAssistant,
-				Kind:      runtime.MessageKindToolCall,
-				ToolCall:  &call,
-				Content:   fmt.Sprintf("tool call: %s", call.Name),
-				CreatedAt: time.Now().UTC(),
-			}
-			state.Messages = append(state.Messages, message)
+		streamedByID := make(map[string]streamedExecution, len(streamed))
+		for _, record := range streamed {
+			streamedByID[record.call.ID] = record
 		}
+		handled := make(map[string]bool, len(streamedByID))
+		pending := make([]runtime.ToolCall, 0, len(response.ToolCalls))
+		for _, rawCall := range response.ToolCalls {
+			call := s.normalizeToolCall(rawCall)
+			state.Messages = append(state.Messages, assistantToolCallMessage(call))
+			if record, ok := streamedByID[call.ID]; ok {
+				handled[call.ID] = true
+				s.applyToolUpdates(ctx, state, record.updates)
+				continue
+			}
+			pending = append(pending, call)
+		}
+		for _, record := range streamed {
+			if handled[record.call.ID] {
+				continue
+			}
+			state.Messages = append(state.Messages, assistantToolCallMessage(record.call))
+			s.applyToolUpdates(ctx, state, record.updates)
+		}
+		state.PendingToolCalls = pending
+		if len(pending) == 0 && len(streamed) > 0 {
+			state.NeedModelCall = true
+		}
+	} else if len(streamed) > 0 {
+		state.LastResult = ""
+		for _, record := range streamed {
+			state.Messages = append(state.Messages, assistantToolCallMessage(record.call))
+			s.applyToolUpdates(ctx, state, record.updates)
+		}
+		state.PendingToolCalls = nil
+		state.NeedModelCall = true
 	}
 	return state, nil
 }
@@ -247,23 +331,7 @@ func (s *Session) toolDispatchNode(ctx context.Context, state *runtime.SessionSt
 		state.Error = err.Error()
 		return state, nil
 	}
-	for _, update := range updates {
-		if update.Message != nil {
-			state.Messages = append(state.Messages, *update.Message)
-			if update.Message.ToolResult != nil {
-				runtime.Emit(ctx, runtime.Event{
-					Type:       runtime.EventToolResult,
-					SessionID:  state.SessionID,
-					ToolName:   update.Message.ToolResult.Name,
-					ToolCallID: update.Message.ToolResult.ToolCallID,
-					Message:    update.Message.ToolResult.Content,
-				})
-			}
-		}
-		if update.Denial != nil {
-			state.PermissionDenials = append(state.PermissionDenials, *update.Denial)
-		}
-	}
+	s.applyToolUpdates(ctx, state, updates)
 	state.PendingToolCalls = nil
 	state.NeedModelCall = true
 	return state, nil
@@ -339,4 +407,53 @@ func chunkText(text string, size int) []string {
 		chunks = append(chunks, text)
 	}
 	return chunks
+}
+
+func (s *Session) normalizeToolCall(call runtime.ToolCall) runtime.ToolCall {
+	if call.ID == "" {
+		call.ID = generateMessageID("tool")
+	}
+	if definition, ok := s.registry.Lookup(call.Name); ok {
+		call.ReadOnly = definition.Descriptor.ReadOnly
+		call.ConcurrencySafe = definition.Descriptor.ConcurrencySafe
+		if call.Metadata == nil {
+			call.Metadata = map[string]string{}
+		}
+		if definition.Descriptor.Source != "" && call.Metadata["source"] == "" {
+			call.Metadata["source"] = definition.Descriptor.Source
+		}
+	}
+	return call
+}
+
+func assistantToolCallMessage(call runtime.ToolCall) runtime.Message {
+	callCopy := call
+	return runtime.Message{
+		ID:        generateMessageID("assistant_tool"),
+		Role:      runtime.RoleAssistant,
+		Kind:      runtime.MessageKindToolCall,
+		ToolCall:  &callCopy,
+		Content:   fmt.Sprintf("tool call: %s", call.Name),
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
+func (s *Session) applyToolUpdates(ctx context.Context, state *runtime.SessionState, updates []tools.Update) {
+	for _, update := range updates {
+		if update.Message != nil {
+			state.Messages = append(state.Messages, *update.Message)
+			if update.Message.ToolResult != nil {
+				runtime.Emit(ctx, runtime.Event{
+					Type:       runtime.EventToolResult,
+					SessionID:  state.SessionID,
+					ToolName:   update.Message.ToolResult.Name,
+					ToolCallID: update.Message.ToolResult.ToolCallID,
+					Message:    update.Message.ToolResult.Content,
+				})
+			}
+		}
+		if update.Denial != nil {
+			state.PermissionDenials = append(state.PermissionDenials, *update.Denial)
+		}
+	}
 }

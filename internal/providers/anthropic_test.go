@@ -12,6 +12,7 @@ import (
 )
 
 func TestAnthropicProviderStreaming(t *testing.T) {
+	var streamedCalls []runtime.ToolCall
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			http.NotFound(w, r)
@@ -35,6 +36,8 @@ func TestAnthropicProviderStreaming(t *testing.T) {
 		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool_1\",\"name\":\"echo\",\"input\":{}}}\n\n")
 		_, _ = io.WriteString(w, "event: content_block_delta\n")
 		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"message\\\":\\\"world\\\"}\"}}\n\n")
+		_, _ = io.WriteString(w, "event: content_block_stop\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_stop\",\"index\":1}\n\n")
 		_, _ = io.WriteString(w, "event: message_delta\n")
 		_, _ = io.WriteString(w, "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":9}}\n\n")
 		_, _ = io.WriteString(w, "event: message_stop\n")
@@ -52,6 +55,10 @@ func TestAnthropicProviderStreaming(t *testing.T) {
 		SystemPrompt:    "system",
 		Messages:        []runtime.Message{{Role: runtime.RoleUser, Kind: runtime.MessageKindText, Content: "say hello"}},
 		MaxOutputTokens: 256,
+		OnToolCall: func(call runtime.ToolCall) error {
+			streamedCalls = append(streamedCalls, call)
+			return nil
+		},
 		OnAssistantDelta: func(delta string) {
 			deltas = append(deltas, delta)
 		},
@@ -64,6 +71,12 @@ func TestAnthropicProviderStreaming(t *testing.T) {
 	}
 	if got, want := response.AssistantText, "Hello"; got != want {
 		t.Fatalf("assistant text = %q, want %q", got, want)
+	}
+	if len(streamedCalls) != 1 {
+		t.Fatalf("streamed tool calls = %d, want 1", len(streamedCalls))
+	}
+	if streamedCalls[0].Input["message"] != "world" {
+		t.Fatalf("streamed tool input = %#v, want message=world", streamedCalls[0].Input)
 	}
 	if !response.StreamedText {
 		t.Fatal("expected streamed text response")

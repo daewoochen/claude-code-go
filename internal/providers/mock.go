@@ -46,16 +46,20 @@ func (MockProvider) Generate(ctx context.Context, request GenerateRequest) (Gene
 		if payload == "" {
 			payload = "echo from mock provider"
 		}
+		call := runtime.ToolCall{
+			ID:              fmt.Sprintf("tool_%d", time.Now().UnixNano()),
+			Name:            "echo",
+			Input:           map[string]any{"message": payload},
+			ReadOnly:        true,
+			ConcurrencySafe: true,
+		}
+		if request.OnToolCall != nil {
+			if err := request.OnToolCall(call); err != nil {
+				return GenerateResponse{}, err
+			}
+		}
 		return GenerateResponse{
-			ToolCalls: []runtime.ToolCall{
-				{
-					ID:              fmt.Sprintf("tool_%d", time.Now().UnixNano()),
-					Name:            "echo",
-					Input:           map[string]any{"message": payload},
-					ReadOnly:        true,
-					ConcurrencySafe: true,
-				},
-			},
+			ToolCalls:    []runtime.ToolCall{call},
 			StopReason:   "tool_use",
 			ProviderName: "mock",
 			Usage: runtime.Usage{
@@ -65,31 +69,39 @@ func (MockProvider) Generate(ctx context.Context, request GenerateRequest) (Gene
 		}, nil
 	case strings.HasPrefix(lower, "read "):
 		target := strings.TrimSpace(text[5:])
+		call := runtime.ToolCall{
+			ID:              fmt.Sprintf("tool_%d", time.Now().UnixNano()),
+			Name:            "read_file",
+			Input:           map[string]any{"path": target},
+			ReadOnly:        true,
+			ConcurrencySafe: true,
+		}
+		if request.OnToolCall != nil {
+			if err := request.OnToolCall(call); err != nil {
+				return GenerateResponse{}, err
+			}
+		}
 		return GenerateResponse{
-			ToolCalls: []runtime.ToolCall{
-				{
-					ID:              fmt.Sprintf("tool_%d", time.Now().UnixNano()),
-					Name:            "read_file",
-					Input:           map[string]any{"path": target},
-					ReadOnly:        true,
-					ConcurrencySafe: true,
-				},
-			},
+			ToolCalls:    []runtime.ToolCall{call},
 			StopReason:   "tool_use",
 			ProviderName: "mock",
 		}, nil
 	case strings.HasPrefix(lower, "run "):
 		command := strings.TrimSpace(text[4:])
+		call := runtime.ToolCall{
+			ID:              fmt.Sprintf("tool_%d", time.Now().UnixNano()),
+			Name:            "bash",
+			Input:           map[string]any{"command": command},
+			ReadOnly:        false,
+			ConcurrencySafe: false,
+		}
+		if request.OnToolCall != nil {
+			if err := request.OnToolCall(call); err != nil {
+				return GenerateResponse{}, err
+			}
+		}
 		return GenerateResponse{
-			ToolCalls: []runtime.ToolCall{
-				{
-					ID:              fmt.Sprintf("tool_%d", time.Now().UnixNano()),
-					Name:            "bash",
-					Input:           map[string]any{"command": command},
-					ReadOnly:        false,
-					ConcurrencySafe: false,
-				},
-			},
+			ToolCalls:    []runtime.ToolCall{call},
 			StopReason:   "tool_use",
 			ProviderName: "mock",
 		}, nil

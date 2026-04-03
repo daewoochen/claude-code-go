@@ -87,6 +87,7 @@ The executor supports:
 - permission denial reporting
 - progress events
 - MCP stdio tools loaded dynamically from `tools/list`
+- early dispatch for streamed tool calls before the provider turn fully completes
 
 For MCP servers, `internal/mcp` converts a remote tool into a normal runtime tool definition. That keeps the model/provider layer unaware of whether a tool is builtin or remotely sourced.
 

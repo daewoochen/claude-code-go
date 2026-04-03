@@ -82,7 +82,7 @@ func (p AnthropicProvider) Generate(ctx context.Context, request GenerateRequest
 		return GenerateResponse{}, fmt.Errorf("anthropic api error: %s", strings.TrimSpace(string(raw)))
 	}
 	if body.Stream {
-		return parseAnthropicStream(resp.Body, request.OnAssistantDelta)
+		return parseAnthropicStream(resp.Body, request.OnAssistantDelta, request.OnToolCall)
 	}
 
 	raw, err := io.ReadAll(resp.Body)
@@ -163,9 +163,10 @@ type anthropicStreamBlock struct {
 	ToolName     string
 	ToolInput    map[string]any
 	ToolInputRaw strings.Builder
+	ToolSent     bool
 }
 
-func parseAnthropicStream(reader io.Reader, onAssistantDelta func(string)) (GenerateResponse, error) {
+func parseAnthropicStream(reader io.Reader, onAssistantDelta func(string), onToolCall func(runtime.ToolCall) error) (GenerateResponse, error) {
 	response := GenerateResponse{
 		ProviderName: "anthropic",
 		StreamedText: onAssistantDelta != nil,
@@ -234,6 +235,10 @@ func parseAnthropicStream(reader io.Reader, onAssistantDelta func(string)) (Gene
 				block.BlockType = "tool_use"
 				block.ToolInputRaw.WriteString(event.Delta.PartialJSON)
 			}
+		case "content_block_stop":
+			if err := maybeDispatchStreamTool(blocks[event.Index], onToolCall); err != nil {
+				return err
+			}
 		case "message_delta":
 			if event.Delta.StopReason != "" {
 				response.StopReason = event.Delta.StopReason
@@ -283,21 +288,13 @@ func parseAnthropicStream(reader io.Reader, onAssistantDelta func(string)) (Gene
 		case "text":
 			response.AssistantText += block.Text.String()
 		case "tool_use":
-			input := block.ToolInput
-			if input == nil {
-				input = map[string]any{}
-			}
-			if raw := strings.TrimSpace(block.ToolInputRaw.String()); raw != "" {
-				var decoded map[string]any
-				if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-					return GenerateResponse{}, fmt.Errorf("parse anthropic tool input: %w", err)
-				}
-				input = decoded
+			if err := maybeDispatchStreamTool(block, onToolCall); err != nil {
+				return GenerateResponse{}, err
 			}
 			response.ToolCalls = append(response.ToolCalls, runtime.ToolCall{
 				ID:              block.ToolID,
 				Name:            block.ToolName,
-				Input:           input,
+				Input:           normalizedToolInput(block),
 				ReadOnly:        false,
 				ConcurrencySafe: false,
 			})
@@ -308,6 +305,43 @@ func parseAnthropicStream(reader io.Reader, onAssistantDelta func(string)) (Gene
 		response.StopReason = "end_turn"
 	}
 	return response, nil
+}
+
+func maybeDispatchStreamTool(block *anthropicStreamBlock, onToolCall func(runtime.ToolCall) error) error {
+	if block == nil || block.BlockType != "tool_use" || block.ToolSent {
+		return nil
+	}
+	block.ToolInput = normalizedToolInput(block)
+	if onToolCall != nil {
+		if err := onToolCall(runtime.ToolCall{
+			ID:              block.ToolID,
+			Name:            block.ToolName,
+			Input:           block.ToolInput,
+			ReadOnly:        false,
+			ConcurrencySafe: false,
+		}); err != nil {
+			return err
+		}
+	}
+	block.ToolSent = true
+	return nil
+}
+
+func normalizedToolInput(block *anthropicStreamBlock) map[string]any {
+	if block == nil {
+		return map[string]any{}
+	}
+	input := block.ToolInput
+	if input == nil {
+		input = map[string]any{}
+	}
+	if raw := strings.TrimSpace(block.ToolInputRaw.String()); raw != "" {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
+			input = decoded
+		}
+	}
+	return input
 }
 
 type anthropicRequest struct {
