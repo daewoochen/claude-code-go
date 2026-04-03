@@ -1,0 +1,6 @@
+.DS_Store
+.ccgo/
+bin/
+dist/
+coverage.out
+*.test

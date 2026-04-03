@@ -1,0 +1,16 @@
+{
+  "servers": [
+    {
+      "name": "demo",
+      "transport": "stdio",
+      "command": "cat",
+      "static_tools": [
+        {
+          "name": "hello",
+          "description": "Return a fixed hello payload from a static MCP bridge.",
+          "result": "hello from MCP"
+        }
+      ]
+    }
+  ]
+}
