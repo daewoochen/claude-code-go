@@ -11,9 +11,11 @@
 - multi-turn agent loops
 - structured tool calling
 - streaming events
+- local input preprocessing and slash commands
 - resumable sessions
+- prompt-too-long and max-output recovery
 - checkpoint-ready execution graphs
-- MCP-friendly tool registration
+- real stdio MCP tool registration
 
 It is designed for people who want the **Claude Code style architecture** in a **Go-first, hackable, open-source codebase**.
 
@@ -21,7 +23,7 @@ It is designed for people who want the **Claude Code style architecture** in a *
 
 - **One of the clearest Go codebases for building a real coding agent**
 - **Graph-based runtime, not a toy wrapper around an API call**
-- **Session persistence, tool loops, permission policy, and MCP hooks included**
+- **Session persistence, tool loops, permission policy, and MCP transport included**
 - **Small enough to understand, serious enough to extend**
 
 If you want to build your own terminal agent, internal engineering copilot, or remote coding worker in Go, this repo is meant to save you weeks.
@@ -53,12 +55,15 @@ $ go run ./cmd/ccgo print --provider mock "use echo from stream mode"
 | Go-native CLI runtime | Yes |
 | Eino graph orchestration | Yes |
 | Multi-turn agent loop | Yes |
+| Local input preprocessing (`/tools`, `/session`, `!cmd`) | Yes |
 | Tool registry + permission policy | Yes |
 | Session transcript + snapshot resume | Yes |
+| Prompt-too-long recovery | Yes |
+| Max-output auto-continue | Yes |
 | Anthropic-compatible provider | Yes |
 | Real Anthropic SSE text streaming | Yes |
-| MCP config + static tool bridge | Yes |
-| Full stdio MCP protocol client | Not yet |
+| Full stdio MCP protocol client | Yes |
+| MCP static tool bridge | Yes |
 | TUI shell | Not yet |
 
 ## Why This Exists
@@ -83,6 +88,13 @@ Most coding agents today are either:
 - `ccgo resume` for resumable sessions
 - `ccgo sessions list` for session discovery
 - `ccgo mcp check` for MCP config validation
+- local pre-model shortcuts:
+  - `/tools`
+  - `/session`
+  - `/clear`
+  - `/model <name>`
+  - `/permission <mode>`
+  - `!<bash command>`
 - a graph-based agent loop with these stages:
 
 ```text
@@ -103,6 +115,9 @@ InputNormalize
 - Anthropic-compatible messages API provider with SSE text streaming
 - append-only transcript + snapshot persistence
 - permission policy layer with `allow_all`, `deny_all`, `ask_as_error`
+- reactive prompt-too-long compaction
+- automatic continuation on max-output stop reasons
+- stdio MCP tool discovery and tool invocation
 
 ## Quickstart
 
@@ -128,7 +143,14 @@ go run ./cmd/ccgo run --provider mock "hello from ccgo"
 go run ./cmd/ccgo print --provider mock "use echo from stream mode"
 ```
 
-### 4. Run with Anthropic
+### 4. Try local runtime commands
+
+```bash
+go run ./cmd/ccgo run --provider mock "/tools"
+go run ./cmd/ccgo run --provider mock --permission-mode allow_all "!pwd"
+```
+
+### 5. Run with Anthropic
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here
@@ -166,18 +188,19 @@ This repo already includes:
 
 - MCP config loading
 - MCP config validation
-- MCP-to-tool registration hooks
-- a static MCP tool bridge for local development
+- stdio MCP client bootstrapping
+- dynamic MCP tool discovery via `tools/list`
+- MCP tool invocation via `tools/call`
+- a static MCP tool bridge for local development and testing
 
-The next step is a full stdio MCP protocol client.
-
-A sample config is available at [examples/mcp.example.json](./examples/mcp.example.json).
+Sample configs are available at [examples/mcp.example.json](./examples/mcp.example.json) and [examples/mcp.stdio.example.json](./examples/mcp.stdio.example.json).
 
 ## Roadmap
 
-- full stdio MCP protocol support
+- SSE tool-use streaming and earlier tool dispatch
 - richer context compression and token-budget recovery
 - tool interrupt / resume semantics mapped to Eino checkpoints
+- richer MCP transports beyond stdio
 - OpenAI-compatible provider
 - TUI shell on top of the current runtime
 - remote worker / daemon mode

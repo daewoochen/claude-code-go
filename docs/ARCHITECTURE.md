@@ -18,16 +18,21 @@ The implementation splits into five layers:
 
 ```mermaid
 flowchart TD
-    A["User input"] --> B["Session.RunTurn"]
-    B --> C["Persist user message"]
-    C --> D["Eino graph invoke"]
-    D --> E["Model call"]
-    E --> F{"tool calls?"}
-    F -->|no| G["assistant result"]
-    F -->|yes| H["tool executor"]
-    H --> I["tool_result messages"]
-    I --> D
-    G --> J["snapshot + transcript"]
+    A["User input"] --> B["processInput"]
+    B --> C{"local command?"}
+    C -->|yes| D["assistant/tool result emitted locally"]
+    C -->|no| E["Persist user message"]
+    E --> F["Eino graph invoke"]
+    F --> G["MessageRewrite / recovery guards"]
+    G --> H["Model call"]
+    H --> I{"tool calls?"}
+    I -->|no| J["assistant result"]
+    I -->|yes| K["tool executor"]
+    K --> L["builtin tools / MCP stdio tools"]
+    L --> M["tool_result messages"]
+    M --> F
+    D --> N["snapshot + transcript"]
+    J --> N
 ```
 
 ## State Model
@@ -44,6 +49,8 @@ It carries:
 - checkpoint id
 - model metadata
 - interrupt and resume metadata
+- reactive compaction counters
+- max-output recovery counters
 
 This keeps the CLI, storage layer, and graph nodes aligned on one source of truth.
 
@@ -79,6 +86,9 @@ The executor supports:
 - batch concurrency for concurrency-safe tools
 - permission denial reporting
 - progress events
+- MCP stdio tools loaded dynamically from `tools/list`
+
+For MCP servers, `internal/mcp` converts a remote tool into a normal runtime tool definition. That keeps the model/provider layer unaware of whether a tool is builtin or remotely sourced.
 
 ## Persistence
 
@@ -100,4 +110,4 @@ The runtime is optimized for:
 - explicit tool boundaries
 - provider portability
 
-The next major upgrades are real streaming providers, full MCP transport support, and richer checkpoint-driven interruption semantics.
+The next major upgrades are SSE tool-use streaming with earlier dispatch, richer MCP transports beyond stdio, and deeper checkpoint-driven interruption semantics.

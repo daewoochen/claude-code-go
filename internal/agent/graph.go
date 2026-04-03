@@ -145,6 +145,20 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 		response, err = s.provider.Generate(ctx, request)
 	}
 	if err != nil {
+		if isPromptTooLongError(err) && state.ReactiveCompactCount < maxReactiveCompactAttempts {
+			if compactStateForRetry(state, "prompt_too_long") {
+				runtime.Emit(ctx, runtime.Event{
+					Type:      runtime.EventSystem,
+					SessionID: state.SessionID,
+					Message:   "context too large, compacting history and retrying",
+				})
+				state.NeedModelCall = true
+				state.Continue = true
+				state.Completed = false
+				state.Error = ""
+				return state, nil
+			}
+		}
 		state.Error = err.Error()
 		return state, nil
 	}
@@ -153,6 +167,7 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 	state.Usage.OutputTokens += response.Usage.OutputTokens
 	state.LastProvider = response.ProviderName
 	state.LastStopReason = response.StopReason
+	state.ReactiveCompactCount = 0
 	state.NeedModelCall = false
 
 	if strings.TrimSpace(response.AssistantText) != "" {
@@ -181,6 +196,20 @@ func (s *Session) modelCallNode(ctx context.Context, state *runtime.SessionState
 			Message:   text,
 		})
 	}
+
+	if isMaxOutputStopReason(response.StopReason) && len(response.ToolCalls) == 0 && state.MaxOutputRecoveryCount < maxOutputRecoveryAttempts {
+		appendContinuationMessage(state)
+		runtime.Emit(ctx, runtime.Event{
+			Type:      runtime.EventSystem,
+			SessionID: state.SessionID,
+			Message:   "model hit max output tokens, automatically continuing",
+		})
+		state.NeedModelCall = true
+		state.Continue = true
+		state.Completed = false
+		return state, nil
+	}
+	state.MaxOutputRecoveryCount = 0
 
 	if len(response.ToolCalls) > 0 {
 		state.PendingToolCalls = response.ToolCalls

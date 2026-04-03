@@ -163,24 +163,53 @@ func (s *Session) runTurn(ctx context.Context, input string, opts runtime.RunOpt
 	s.applyOptions(opts)
 
 	if strings.TrimSpace(input) != "" {
-		userMessage := runtime.Message{
-			ID:        generateMessageID("user"),
-			Role:      runtime.RoleUser,
-			Kind:      runtime.MessageKindText,
-			Content:   strings.TrimSpace(input),
-			CreatedAt: time.Now().UTC(),
+		processed, err := s.processInput(ctx, input)
+		if err != nil {
+			s.state.Error = err.Error()
+			s.state.NeedModelCall = false
+			s.state.Completed = true
+			s.state.Continue = false
+		} else {
+			if processed.clearFirst {
+				s.state.Messages = nil
+				s.state.PermissionDenials = nil
+				s.state.PendingToolCalls = nil
+				s.state.LastResult = ""
+				s.state.Error = ""
+				s.state.ReactiveCompactCount = 0
+				s.state.MaxOutputRecoveryCount = 0
+			}
+			if len(processed.messages) > 0 {
+				s.state.Messages = append(s.state.Messages, processed.messages...)
+				records := make([]runtime.TranscriptRecord, 0, len(processed.messages))
+				for _, message := range processed.messages {
+					msg := message
+					records = append(records, runtime.TranscriptRecord{
+						Type:      "message",
+						SessionID: s.state.SessionID,
+						Message:   &msg,
+					})
+				}
+				_ = s.store.Append(ctx, s.state.SessionID, records...)
+			}
+			s.state.NeedModelCall = processed.shouldQuery
+			s.state.Completed = !processed.shouldQuery
+			s.state.Continue = false
+			s.state.Error = ""
+			if processed.resultText != "" {
+				s.state.LastResult = processed.resultText
+				runtime.Emit(ctx, runtime.Event{
+					Type:      runtime.EventAssistantDelta,
+					SessionID: s.state.SessionID,
+					Delta:     processed.resultText,
+				})
+				runtime.Emit(ctx, runtime.Event{
+					Type:      runtime.EventAssistant,
+					SessionID: s.state.SessionID,
+					Message:   processed.resultText,
+				})
+			}
 		}
-		s.state.Messages = append(s.state.Messages, userMessage)
-		s.state.NeedModelCall = true
-		s.state.Completed = false
-		s.state.Continue = false
-		s.state.Error = ""
-		s.state.LastResult = ""
-		_ = s.store.Append(ctx, s.state.SessionID, runtime.TranscriptRecord{
-			Type:      "message",
-			SessionID: s.state.SessionID,
-			Message:   &userMessage,
-		})
 	}
 
 	for {

@@ -1,0 +1,16 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "transport": "stdio",
+      "command": "/path/to/your-mcp-server-binary",
+      "args": [
+        "--root",
+        "."
+      ],
+      "env": {
+        "LOG_LEVEL": "info"
+      }
+    }
+  ]
+}
